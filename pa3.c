@@ -4,6 +4,7 @@
 
 #define NUM_FREQS 4 //number of cpu frequency settings
 #define NUM_TASKS 5 //max tasks the task array can hold
+#define IDLE -1 //idle value
 static const int FREQS[NUM_FREQS] = {1188, 918, 648, 384}; //MHz for each freq index, 0 = fastest
 
 //struct to hold info for each task
@@ -35,7 +36,11 @@ static int parseInput(const char *file, System *sys){
     }
 
     //read header line, 7 numbers
-    if(fscanf(f, "%d %d %d %d %d %d %d", &sys->numTasks, &sys->simLength, &sys->activePwr[0], &sys->activePwr[1], &sys->activePwr[2], &sys->activePwr[3], &sys->idlePwr) != 7){
+    if(fscanf(f, "%d %d %d %d %d %d %d", 
+        &sys->numTasks, &sys->simLength, 
+        &sys->activePwr[0], &sys->activePwr[1], 
+        &sys->activePwr[2], &sys->activePwr[3], 
+        &sys->idlePwr) != 7){
         fprintf(stderr, "bad header line\n");
         fclose(f);
         return -1;
@@ -52,8 +57,11 @@ static int parseInput(const char *file, System *sys){
     for(int i = 0; i < sys->numTasks; i++){
         Task *t = &sys->task[i]; //pointer to the task being filled
 
-        if(fscanf(f, "%15s %d %d %d %d %d", t->taskName, &t->period, &t->wcet[0], &t->wcet[1], &t->wcet[2], &t->wcet[3]) != 6){
-            fprintf(stderr, "error: could not read task %d (line %d of %s): expected name, period and %d WCETs\n", i + 1, i + 2, file, NUM_FREQS);
+        if(fscanf(f, "%15s %d %d %d %d %d", 
+            t->taskName, &t->period, 
+            &t->wcet[0], &t->wcet[1], 
+            &t->wcet[2], &t->wcet[3]) != 6){
+                fprintf(stderr, "error: could not read task %d (line %d of %s): expected name, period and %d WCETs\n", i + 1, i + 2, file, NUM_FREQS);  
             fclose(f);
             return -1;
         }
@@ -67,6 +75,32 @@ static int parseInput(const char *file, System *sys){
     return 0;
 }
 
+int pickNext(System* sys, int isEDF){
+    int bsf = IDLE; //best so far variable
+    
+    for(int i = 0; i < sys->numTasks; i++){
+        Task *t = &sys->task[i];
+
+        if(t->remainingTime == 0) 
+            continue; //not ready, no work left on its job
+
+        if(bsf == IDLE){ //first ready task found, nothing to compare to yet
+            bsf = i;
+            continue;
+        }
+
+        Task *best = &sys->task[bsf]; //current best task
+        if(isEDF){
+            if(t->deadline < best->deadline) 
+                bsf = i; //EDF: earlier deadline wins, ties keep the first task
+        }
+        else{
+            if(t->period < best->period) 
+                bsf = i; //RM: shorter period wins, ties keep the first task
+        }
+    }
+    return bsf; //index of task to run, or IDLE if nothing is ready
+}
 
 int main(int argc, char *argv[]){
     int isEDF, isRM, isEE;
@@ -114,6 +148,32 @@ int main(int argc, char *argv[]){
                t->wcet[3], t->freqIndex, FREQS[t->freqIndex]);
     }
     //END TEMPORARY
+
+
+    int k; //loop variable
+    int misses = 0; //counter for misses
+    for(k = 0; k < sys.simLength; k++){
+        //Release new jobs whose period starts at k
+        for(int i=0; i < sys.numTasks; i++){
+            Task *t = &sys.task[i]; //pointer to the task being checked
+
+            if(k % t->period == 0){ //task starts a new period at k
+                if(t->remainingTime > 0){ //old job still had work left at its deadline
+                    printf("Missed deadline task %s at t=%d\n", t->taskName, k);
+                    misses++;
+                }
+                t->remainingTime = t->wcet[t->freqIndex]; //new job needs wcet at this task's freq
+                t->deadline = t->period + k; //new job must finish by the next release
+            }
+
+        }
+
+        //pick which ready job runs this second, or idle
+
+        //Run it for one second, reducing it remaining work by 1
+
+        //Record what ran, so consecutive seconds of the same task merge into one output line
+    }
 
 
     return 0;
